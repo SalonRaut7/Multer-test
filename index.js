@@ -45,42 +45,48 @@ app.get('/', (req, res) => {
     res.render('homepage');
 });
 
-// Route to handle file upload
-app.post('/upload', upload.single('profileImage'), async (req, res) => {
+// Route to handle multiple file upload
+app.post('/upload', upload.array('profileImages', 10), async (req, res) => {  // 'profileImages' is the input name, 10 is the max files
     try {
-        // Check if file exists in the request
-        if (!req.file) {
-            return res.status(400).send("No file uploaded.");
+        // Check if files exist in the request
+        if (!req.files || req.files.length === 0) {
+            return res.status(400).send("No files uploaded.");
         }
 
-        // Upload the file buffer directly to Cloudinary using upload_stream
-        const uploadStream = cloudinary.uploader.upload_stream(
-            {
-                folder: "UploadTesting",   // Specify the folder for Cloudinary
-                resource_type: 'auto',     // Automatically detect file type (image, video, etc.)
-                timeout: 60000,            // Timeout for Cloudinary upload
-            },
-            async (error, result) => {
-                if (error) {
-                    console.error("Error during Cloudinary upload:", error);
-                    return res.status(500).send("Failed to upload the file.");
+        const fileUploadPromises = req.files.map(async (file) => {
+            // Upload each file buffer directly to Cloudinary using upload_stream
+            const uploadStream = cloudinary.uploader.upload_stream(
+                {
+                    folder: "UploadTesting",   // Specify the folder for Cloudinary
+                    resource_type: 'auto',     // Automatically detect file type (image, video, etc.)
+                    timeout: 60000,            // Timeout for Cloudinary upload
+                },
+                async (error, result) => {
+                    if (error) {
+                        console.error("Error during Cloudinary upload:", error);
+                        return;
+                    }
+
+                    // Save file details to MongoDB after successful upload
+                    const savetoDb = await File.create({
+                        filename: file.originalname,
+                        public_id: result.public_id,
+                        imgUrl: result.secure_url,
+                    });
+
+                    console.log("Cloudinary upload response:", result, savetoDb);
                 }
+            );
 
-                // Save file details to MongoDB after successful upload
-                const savetoDb = await File.create({
-                    filename: req.file.originalname,
-                    public_id: result.public_id,
-                    imgUrl: result.secure_url,
-                });
+            // Create a readable stream from the file buffer and pipe it to Cloudinary
+            uploadStream.end(file.buffer);
+        });
 
-                // Redirect to homepage with the file URL
-                res.redirect("/"); // You can pass the URL to display on the homepage
-                console.log("Cloudinary upload response:", result, savetoDb);
-            }
-        );
+        // Wait for all file uploads to finish
+        await Promise.all(fileUploadPromises);
 
-        // Create a readable stream from the file buffer and pipe it to Cloudinary
-        uploadStream.end(req.file.buffer);
+        // Redirect to homepage or send response after uploading all files
+        res.redirect("/");
 
     } catch (error) {
         // Catch any other errors
@@ -88,8 +94,8 @@ app.post('/upload', upload.single('profileImage'), async (req, res) => {
         res.status(500).send("Something went wrong during the file upload.");
     }
 });
+
 // Start the server and listen on the specified port
 app.listen(PORT, () => {
     console.log(`Server is running on http://localhost:${PORT}`);
 });
-
